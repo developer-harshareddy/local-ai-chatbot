@@ -5,7 +5,7 @@ from database import (
     create_session, get_messages, save_message,
     list_sessions, delete_session
 )
-from llm_service import get_llm_response, MODEL_NAME
+from llm_service import stream_llm_response, MODEL_NAME
 SYSTEM_MESSAGE = {
     "role": "system",
     "content": (
@@ -56,17 +56,18 @@ if prompt:
     with st.chat_message("user"):
         st.markdown(prompt)
     llm_messages = [SYSTEM_MESSAGE] + st.session_state.messages
+    
     with st.chat_message("assistant"):
         with st.spinner("The local model is thinking…"):
+            answer_parts = []
+            placeholder = st.empty()
             try:
-                answer = get_llm_response(llm_messages)
-                st.markdown(answer)
-                save_message(st.session_state.session_id, "assistant", answer)
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": answer}
-                )
+                for piece in stream_llm_response(llm_messages):
+                    answer_parts.append(piece)
+                    placeholder.markdown("".join(answer_parts) + "▌")
+                    answer = "".join(answer_parts)
+                    placeholder.markdown(answer)
+                    save_message(st.session_state.session_id, "assistant", answer)
+                    st.session_state.messages.append({"role": "assistant", "content": answer})
             except requests.exceptions.RequestException as exc:
                 st.error(f"Ollama request failed: {exc}")
-                # Keep the user message saved; it can be retried manually.
-            except (ValueError, KeyError) as exc:
-                st.error(f"Unexpected Ollama response: {exc}")
