@@ -1,120 +1,72 @@
 
-
 import streamlit as st
 import requests
-
-from llm_service import get_llm_response, MODEL_NAME
-
-
-# ----------------------------------
-# Page configuration
-# ----------------------------------
-
-st.set_page_config(
-    page_title="Local AI Chatbot",
-    page_icon="🤖",
-    layout="centered"
+from database import (
+    create_session, get_messages, save_message,
+    list_sessions, delete_session
 )
-
-
-# ----------------------------------
-# System instructions
-# ----------------------------------
-
+from llm_service import get_llm_response, MODEL_NAME
 SYSTEM_MESSAGE = {
     "role": "system",
     "content": (
-        "You are a helpful AI assistant specializing in "
-        "Java, Spring Boot, Python, GenAI and fintech. "
-        "Explain concepts clearly with practical examples."
+        "You are a helpful assistant specializing in Java, Spring Boot, "
+        "Python, GenAI and fintech. Explain clearly with practical examples."
     )
 }
 
-
-# ----------------------------------
-# Initialize session state
-# ----------------------------------
-
-if "messages" not in st.session_state:
-    st.session_state.messages = [SYSTEM_MESSAGE]
-
-
-# ----------------------------------
-# Application heading
-# ----------------------------------
-
+st.set_page_config(page_title="Local AI Chatbot", page_icon="🤖")
 st.title("🤖 Local AI Chatbot")
+st.caption(f"Local Ollama model: {MODEL_NAME}")
 
-st.caption(f"Powered by Ollama | Model: {MODEL_NAME}")
-
-st.info("Your conversations are handled by your local LLM.")
-
-
-# ----------------------------------
-# Sidebar
-# ----------------------------------
+# Create one session ID for this Streamlit browser session.
+if "session_id" not in st.session_state:
+    st.session_state.session_id = create_session()
+if "messages" not in st.session_state:
+    st.session_state.messages = get_messages(st.session_state.session_id)
 
 with st.sidebar:
-    st.header("Chat Settings")
-
-    st.write("Model:", MODEL_NAME)
-
-    if st.button("Clear Conversation", use_container_width=True):
-        st.session_state.messages = [SYSTEM_MESSAGE]
+    st.subheader("Conversations")
+    if st.button("🤖 New conversation", use_container_width=True):
+        st.session_state.session_id = create_session()
+        st.session_state.messages = []
+        st.rerun()
+    st.caption("Saved conversations")
+    for item in list_sessions():
+        sid = str(item["id"])
+        label = f"{sid[:8]}… ({item['message_count']} messages)"
+        if st.button(label, key=f"open_{sid}", use_container_width=True):
+            st.session_state.session_id = sid
+            st.session_state.messages = get_messages(sid)
+            st.rerun()
+    if st.button("Delete current conversation", use_container_width=True):
+        delete_session(st.session_state.session_id)
+        st.session_state.session_id = create_session()
+        st.session_state.messages = []
         st.rerun()
 
-
-# ----------------------------------
-# Display conversation history
-# ----------------------------------
-
+# Display the selected conversation.
 for message in st.session_state.messages:
-
-    if message["role"] == "system":
-        continue
-
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+prompt = st.chat_input("Ask me anything…")
 
-
-# ----------------------------------
-# Accept user input
-# ----------------------------------
-
-user_input = st.chat_input("Ask me anything...")
-
-if user_input:
-
-    # Display user message
+if prompt:
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    save_message(st.session_state.session_id, "user", prompt)
     with st.chat_message("user"):
-        st.markdown(user_input)
-
-    # Add user message to history
-    st.session_state.messages.append({
-        "role": "user",
-        "content": user_input
-    })
-
-    # Generate AI response
+        st.markdown(prompt)
+    llm_messages = [SYSTEM_MESSAGE] + st.session_state.messages
     with st.chat_message("assistant"):
-
-        with st.spinner("AI is thinking..."):
-
+        with st.spinner("The local model is thinking…"):
             try:
-                answer = get_llm_response(
-                    st.session_state.messages
-                )
-
+                answer = get_llm_response(llm_messages)
                 st.markdown(answer)
-
-                # Save assistant response
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": answer
-                })
-
-            except requests.exceptions.RequestException as error:
-                st.error(f"Could not communicate with Ollama: {error}")
-
-            except (ValueError, KeyError) as error:
-                st.error(f"Invalid response from Ollama: {error}")
+                save_message(st.session_state.session_id, "assistant", answer)
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": answer}
+                )
+            except requests.exceptions.RequestException as exc:
+                st.error(f"Ollama request failed: {exc}")
+                # Keep the user message saved; it can be retried manually.
+            except (ValueError, KeyError) as exc:
+                st.error(f"Unexpected Ollama response: {exc}")
