@@ -1,6 +1,8 @@
 
 import streamlit as st
 import requests
+
+from document_loader import extract_pdf_text
 from database import (
     create_session, get_messages, save_message,
     list_sessions, delete_session
@@ -71,3 +73,12 @@ if prompt:
                     st.session_state.messages.append({"role": "assistant", "content": answer})
             except requests.exceptions.RequestException as exc:
                 st.error(f"Ollama request failed: {exc}")
+
+uploaded_pdf = st.file_uploader("Upload a PDF", type=["pdf"])
+if uploaded_pdf:
+    pages = extract_pdf_text(uploaded_pdf)
+    extracted = "\n\n".join(
+        f"[Page {p['page']}]\n{p['text']}" for p in pages
+    )
+    st.write(f"Extracted text from {len(pages)} pages.")
+    st.text_area("Extraction preview", extracted, height=250)
