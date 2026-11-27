@@ -1,31 +1,111 @@
 
 import chromadb
-from embeddings import LocalEmbedder
+from pathlib import Path
+
 
 class VectorStore:
-    
-    def __init__(self):
-        self.client = chromadb.PersistentClient(path="chroma_db")
+
+    def __init__(
+        self,
+        persist_directory="chroma_db",
+        collection_name="pdf_documents"
+    ):
+        """
+        Initialize persistent ChromaDB storage.
+        """
+
+        self.persist_directory = str(Path(persist_directory))
+
+        self.client = chromadb.PersistentClient(
+            path=self.persist_directory
+        )
+
         self.collection = self.client.get_or_create_collection(
-            name="payment_documents", metadata={"hnsw:space": "cosine"})
-        self.embedder = LocalEmbedder()
-    
-    def add_chunks(self, chunks, document_id, filename):
-        if not chunks: return 0
-        texts = [c["text"] for c in chunks]
-        vectors = self.embedder.embed_texts(texts)
+            name=collection_name,
+            metadata={"hnsw:space": "cosine"}
+        )
+
+        print("ChromaDB initialized successfully.")
+        print("Storage directory:", self.persist_directory)
+        print("Collection:", collection_name)
+    def upsert_chunks(self, chunks, embeddings):
+        """
+        Store or update document chunks and their embeddings.
+        """
+
+        if len(chunks) != len(embeddings):
+            raise ValueError(
+                "Number of chunks and embeddings must match"
+            )
+
+        if not chunks:
+            return
+
+        ids = [item["id"] for item in chunks]
+
+        documents = [
+            item["text"] for item in chunks
+        ]
+
+        metadatas = [
+            item["metadata"] for item in chunks
+        ]
+
         self.collection.upsert(
-            ids=[c["chunk_id"] for c in chunks], documents=texts,
-            embeddings=vectors,
-            metadatas=[{"document_id": document_id,
-                        "source_filename": filename,
-                        "page_number": c["page_number"]} for c in chunks])
-        return len(chunks)
+            ids=ids,
+            documents=documents,
+            embeddings=embeddings,
+            metadatas=metadatas
+        )
+
+        print(f"Successfully stored {len(chunks)} chunks.")
+
+    def search(self, query_embedding, top_k=3):
+        """
+        Search for the most relevant document chunks.
+        """
+
+        if not query_embedding:
+            raise ValueError("Query embedding cannot be empty")
+
+        if top_k <= 0:
+            raise ValueError("top_k must be greater than zero")
+
+        total_chunks = self.collection.count()
+
+        if total_chunks == 0:
+             return []
+
+        results = self.collection.query(
+                    query_embeddings=[query_embedding],
+                    n_results=min(top_k, total_chunks),
+                    include=[
+                            "documents",
+                            "metadatas",
+                            "distances"
+            ]
+        )
+
+        matches = []
+
+        if not results["ids"] or not results["ids"][0]:
+            return matches
+
+        for index, chunk_id in enumerate(results["ids"][0]):
+
+            matches.append({
+                "id": chunk_id,
+                "text": results["documents"][0][index],
+                "metadata": results["metadatas"][0][index],
+                "distance": results["distances"][0][index]
+            })
+
+        return matches
+
+    def get_total_chunks(self):
+        """
+        Return the total number of stored chunks.
+        """
+
+        return self.collection.count()
     
-    def search(self, question, top_k=4):
-        vector = self.embedder.embed_query(question)
-        return self.collection.query(query_embeddings=[vector], n_results=top_k,
-            include=["documents", "metadatas", "distances"])
-        
-        Integrate PDF upload
-After Step 7 extracts pages, add an “Index PDF” button. On click call split_into_chunks(pages), create a document_id with uuid4(), then call VectorStore().add_chunks(chunks, document_id, uploaded_pdf.name). Display the number of indexed chunks. Use stable IDs or delete old chunks before re-indexing the same document to avoid duplicate copies.
