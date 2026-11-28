@@ -22,6 +22,11 @@ Rules:
 3. Use only the information returned by the Python tools.
 4. After receiving tool results, explain them clearly.
 5. If a tool returns an error, communicate that error to the user.
+6. Use conversation history to understand follow-up questions.
+7. Resolve references such as "it", "that account", and "that transaction"
+   using previous messages.
+8. If an account ID or transaction ID cannot be identified from the
+   conversation, ask the user for clarification instead of guessing.
 """
 
 
