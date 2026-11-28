@@ -66,10 +66,16 @@ def agent_node(state):
     else:
         print("Agent generated a normal response.")
 
+    has_tool_calls = bool(
+    assistant_message.get("tool_calls")
+)
+
     return {
-        "messages": [assistant_message],
-        "workflow_status": "processing"
-    }
+    "messages": [assistant_message],
+    "workflow_status": (
+        "processing" if has_tool_calls else "completed"
+    )
+}
 
 
 # --------------------------------------------------
