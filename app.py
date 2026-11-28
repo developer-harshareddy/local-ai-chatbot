@@ -17,6 +17,7 @@ from chunking import chunk_pages
 from embeddings import EmbeddingService
 from vector_store import VectorStore
 from rag_service import RAGService
+from tool_service import chat_with_tools
 
 # --------------------------------------------------
 # SYSTEM CONFIGURATION
@@ -135,11 +136,14 @@ for message in st.session_state.messages:
 # --------------------------------------------------
 # CHAT WITH LOCAL OLLAMA MODEL + RAG
 # --------------------------------------------------
-
-use_rag = st.checkbox(
-    "📚 Use uploaded documents (RAG)",
-    value=False,
-    help="Enable this to answer questions using your indexed PDFs."
+chat_mode = st.selectbox(
+    "Choose Chatbot Mode",
+    options=[
+        "Normal Chat",
+        "Document RAG",
+        "FinTech AI Tools"
+    ],
+    index=0
 )
 
 prompt = st.chat_input("Ask me anything…")
@@ -164,20 +168,20 @@ if prompt:
     with st.chat_message("assistant"):
 
         placeholder = st.empty()
+
         answer = ""
         results = []
+        llm_messages = []
 
         try:
 
             # --------------------------------------
-            # STEP 1: PREPARE MESSAGES
+            # STEP 1: PREPARE THE RESPONSE
             # --------------------------------------
 
-            if use_rag:
+            if chat_mode == "Document RAG":
 
-                with st.spinner(
-                    "Retrieving relevant document information..."
-                ):
+                with st.spinner("Retrieving document context..."):
 
                     rag_service = get_rag_service()
 
@@ -188,23 +192,24 @@ if prompt:
 
                 if results:
 
-                    llm_messages = (
-                        rag_service.build_rag_messages(
-                            question=prompt,
-                            results=results
-                        )
+                    llm_messages = rag_service.build_rag_messages(
+                        question=prompt,
+                        results=results
                     )
 
                 else:
 
-                    # Do not let the LLM invent an answer
-                    # when document context is unavailable.
-
                     answer = (
                         "I could not find sufficient information "
-                        "in the uploaded documents to answer "
-                        "your question."
+                        "in the uploaded documents. Please upload "
+                        "and index a relevant PDF first."
                     )
+
+            elif chat_mode == "FinTech AI Tools":
+
+                with st.spinner("Processing FinTech request..."):
+
+                    answer = chat_with_tools(prompt)
 
             else:
 
@@ -215,64 +220,48 @@ if prompt:
                 )
 
             # --------------------------------------
-            # STEP 2: GENERATE LLM RESPONSE
+            # STEP 2: GENERATE RESPONSE
             # --------------------------------------
 
-            if not answer:
+            if chat_mode != "FinTech AI Tools" and not answer:
 
-                with st.spinner(
-                    "The local model is generating a response..."
-                ):
+                answer_parts = []
 
-                    answer_parts = []
+                for piece in stream_llm_response(llm_messages):
 
-                    for piece in stream_llm_response(llm_messages):
+                    answer_parts.append(piece)
 
-                        answer_parts.append(piece)
+                    placeholder.markdown(
+                        "".join(answer_parts) + "▌"
+                    )
 
-                        placeholder.markdown(
-                            "".join(answer_parts) + "▌"
-                        )
-
-                    answer = "".join(answer_parts)
+                answer = "".join(answer_parts)
 
             # --------------------------------------
-            # STEP 3: ADD DOCUMENT SOURCE REFERENCES
+            # STEP 3: ADD RAG SOURCE REFERENCES
             # --------------------------------------
 
-            if use_rag and results:
+            if chat_mode == "Document RAG" and results:
 
-                unique_sources = []
+                sources = []
 
                 for result in results:
 
                     metadata = result.get("metadata", {})
 
-                    source = metadata.get(
-                        "source",
-                        "Unknown source"
-                    )
+                    source = metadata.get("source", "Unknown")
+                    page = metadata.get("page", "Unknown")
 
-                    page = metadata.get(
-                        "page",
-                        "Unknown page"
-                    )
+                    reference = f"- {source}, Page {page}"
 
-                    source_reference = (source, page)
+                    if reference not in sources:
+                        sources.append(reference)
 
-                    if source_reference not in unique_sources:
-                        unique_sources.append(source_reference)
-
-                if unique_sources:
-
-                    source_text = "\n".join(
-                        f"- {source}, Page {page}"
-                        for source, page in unique_sources
-                    )
+                if sources:
 
                     answer += (
                         "\n\n**Sources:**\n" +
-                        source_text
+                        "\n".join(sources)
                     )
 
             # --------------------------------------
@@ -281,28 +270,25 @@ if prompt:
 
             placeholder.markdown(answer)
 
-            if answer:
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": answer
+            })
 
-                save_message(
-                    st.session_state.session_id,
-                    "assistant",
-                    answer
-                )
-
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": answer
-                })
-
-        except requests.exceptions.RequestException as exc:
-
-            st.error(f"Ollama request failed: {exc}")
+            save_message(
+                st.session_state.session_id,
+                "assistant",
+                answer
+            )
 
         except Exception as exc:
 
-            st.error(f"Chat processing failed: {exc}")
+            error_message = (
+                f"Sorry, something went wrong while processing "
+                f"your request: {exc}"
+            )
 
-
+            placeholder.error(error_message)
 
 # --------------------------------------------------
 # PDF UPLOAD AND DOCUMENT INDEXING
